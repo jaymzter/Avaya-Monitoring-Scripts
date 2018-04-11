@@ -1,0 +1,126 @@
+#!/usr/bin/expect -f
+
+#.############################################################################ 
+#.1. log in and run list trunk
+#.2. collect TrunkGroupNumber, TrunkGroupName, TrunkGroupType, TotalChannels
+#.3. status each TrunkGroupNumber, collecting BoardNumber, ChannelNumber,
+#.   CurrentService
+##############################################################################
+
+proc satcmd {cmd} {
+global device_username device_ip device_password sshopts
+eval spawn -noecho ssh $sshopts $device_username@$device_ip
+set timeout 20
+
+expect {
+	eof {
+		exit
+	}
+	timeout {
+		exit
+	}
+	-re "assword: " {
+		send -- "$device_password\r"
+			}
+	}
+
+expect {
+	-re "513\] " {
+		send -- "ossi\r"
+		expect -exact "t" 
+		send -- "c$cmd\rt\r"
+		expect -re "(.*)\nt\n" {
+		set cmdout $expect_out(buffer)
+		send -- "clogoff\rt\r"
+			}
+		}
+	}
+
+expect {
+	-re "n\]" {
+		send -- "y\r"
+		}
+	}
+return $cmdout
+}
+
+proc fmt {} {
+global satcmdout
+set dfields {^(d.*)}
+set tgtype {(.*co.*|.*did.*|.*diod.*|.*fx.*|.*isdn.*|.*sip.*|.*tie.*|.*wats.*)}
+set data [split $satcmdout "\n"]
+
+foreach field $data {
+	if { [regexp $dfields $field match0] } {
+		regsub {^[d,f]} $match0 "" match1
+		set match2 [regexp -all -inline $tgtype $match1]
+		append out $match2
+		append out "\n"
+		}
+	}
+
+	set cmdout [join [lsort -unique -dictionary $out] "\n"]
+	return "$cmdout"
+}
+
+proc strk {} {
+global listtrunk satcmd device_hostname
+set dfields {^(d.*)}
+set data1 [split $listtrunk "\n"]
+set systemTime [clock seconds]
+set date [clock format $systemTime -format {%D %R}]
+
+foreach field1 $data1 {
+	set 1st [lindex $field1 0]
+	set staout [satcmd "status trunk $1st\rf0001ff00\t0002ff00\t0003ff00"]
+	set data [split $staout "\n"]
+
+foreach field $data {
+	if { [regexp $dfields $field match0] } {
+		regsub {^[d,f]} $match0 "" match1
+		regsub -all {\t} $field1 "\," field2
+		regsub -all {\t} $match1 "\," match2
+		puts "$device_hostname\,$field2\,$match2\,$date"
+			}
+		}
+	}
+}
+
+exp_internal 0 # 1 for debugging
+match_max 100000
+log_user 0
+
+#. 1 for shell
+set hpna 1
+
+#. HPNA constants
+if {$hpna == 1} {
+set disperr "ERROR: Not enough parameters
+USAGE: 
+$argv0 \<username\> \<hostname\> \<password\>
+username - username to connect with
+hostname - remote host fqdn or IP addr
+password - remote password\n"
+
+	if { $argc < 2 } {
+		send_error $disperr
+		exit
+	}
+	set device_username [lindex $argv 0]
+	set device_ip [lindex $argv 1]
+	set device_hostname $device_ip
+	set device_password [lindex $argv 2]
+	set sshopts "-o StrictHostKeyChecking=no -p 5022"
+} else {
+	set device_username $tc_device_username$
+	set device_ip $tc_device_ip$
+	set device_hostname $tc_device_hostname$
+	set device_password $tc_device_password$
+	set sshopts "--hostkey-policy=advisory -p 5022"
+}
+
+set heading "PBXName\,TrunkGroupNumber\,TrunkGroupName\,TrunkGroupType\,TotalChannels\,ChannelNumber\,BoardNumber\,CurrentService\,LastUpdateOn,"
+set satcmdout [satcmd "list trunk\rf800bff00\t8003ff00\t8019ff00\tf00bff00"]
+set listtrunk [fmt]
+puts $heading
+strk

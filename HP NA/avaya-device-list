@@ -1,0 +1,209 @@
+#!/usr/bin/expect -f
+
+#.############################################################################ 
+#. timeout and matchmax may need to be adjusted based on how many stations 
+#. there are. current settings work up to 6200 stations
+#.############################################################################ 
+
+proc satcmd {} {
+global device_username device_ip device_password sshopts
+set liststa "list sta\r
+f8005ff00\t004fff00\t8003ff00"
+set timeout 60
+eval spawn -noecho ssh $sshopts $device_username@$device_ip
+match_max 200000
+
+expect {
+	eof {
+		exit
+	}
+	timeout {
+		exit
+	}
+	-re "assword: " {
+		send -- "$device_password\r"
+			}
+	}
+
+expect {
+	-re "513\] " {
+		send -- "ossi\r"
+		expect -exact "t" 
+		send -- "c$liststa\rt\r"
+		expect -re "(.*)\nt\n" {
+		set cmdout $expect_out(1,string)
+		send -- "clogoff\rt\r"
+			}
+		}
+	}
+
+expect {
+	-re "n\]" {
+		send -- "y\r"
+		}
+	}
+return $cmdout
+}
+
+proc fmt {} {
+global satcmdout
+set dfields {^(d.*)}
+set data [split $satcmdout "\n"]
+foreach field $data {
+	if { [regexp $dfields $field match0] } {
+#.		set match1 [regsub {^[d,f]} $match0 ""]
+		regsub {^[d,f]} $match0 "" match1
+		append cmdout $match1
+		append cmdout "\n"
+		}
+	}
+	return "$cmdout"
+}
+
+proc stationstat {} {
+global extn2 enames device_username device_ip device_password sshopts
+set dfields {^(d.*)}
+set sep ","
+
+eval spawn -noecho ssh $sshopts $device_username@$device_ip
+match_max 100000
+set timeout 60
+expect -re "assword: "
+send -- "$device_password\r"
+expect -re "513\] "
+send -- "ossi\r"
+expect -exact "
+t
+"
+foreach line $extn2 {
+	send -- "csta sta $line\rf0002ff00\t0001ff00\t6d00ff00\t6603ff00\t6e00ff00\t6611ff00\rt\r"
+	expect -re "(.*)\nt\n" {
+	set precmd $expect_out(1,string)
+	set precmd1 [split $precmd "\n"]
+		foreach line $precmd1 {
+			if { [regexp $dfields $line match0] } {
+			regsub {^[d,f]} $match0 "" match1
+				if { [regexp {^(\d.*)} $match1 match2] } {
+					regsub -all {\t} $match2 $sep match3
+					set cout1 [regexp -all -inline {^(\d.*)} $match3]
+					}
+				if { [regexp {^([A-Za-z].*)|^(\s*$)} $match1 match4] } {
+					set cout2 [concat $match3 $match4]
+					regsub -all {\t} $cout2 $sep cout3
+					append cmdout $cout3
+					append cmdout "\n"
+					}
+				}
+			}
+		}
+	}
+
+	send -- "clogoff\rt\r"
+	expect -re "n\] "
+	send -- "y\r"
+	return "$cmdout"
+}
+
+exp_internal 0 # 1 for debugging
+log_user 0
+
+#. 1 for shell
+set hpna 1
+#. HPNA constants
+if {$hpna == 1} {
+set disperr "ERROR: Not enough parameters
+USAGE: 
+$argv0 \<username\> \<hostname\> \<password\>
+username - username to connect with
+hostname - remote host fqdn or IP addr
+password - remote password\n"
+
+	if { $argc < 2 } {
+		send_error $disperr
+		exit
+	}
+	set device_username [lindex $argv 0]
+	set device_ip [lindex $argv 1]
+	set device_hostname $device_ip
+	set device_password [lindex $argv 2]
+	set sshopts "-o StrictHostKeyChecking=no -p 5022"
+	set device_custom_netinfo_region NAM
+} else {
+	set device_username $tc_device_username$
+	set device_ip $tc_device_ip$
+	set device_hostname $tc_device_hostname$
+	set device_password $tc_device_password$
+	set device_custom_netinfo_region $tc_device_custom_netinfo_region$
+	set sshopts "--hostkey-policy=advisory -p 5022"
+}
+
+set systemTime [clock seconds]
+set date [clock format $systemTime -format {%D %R}]
+set satcmdout [satcmd]
+set stationlist [fmt]
+set extensions [split $stationlist "\n"]
+
+foreach field $extensions {
+	set stainfo [split $field "\t"]
+	set extn1 [lindex $stainfo 0]
+	set ename [lindex $stainfo 2]
+	append enames "$ename\n"
+	append extn2 "$extn1\n"
+	}
+
+set statussta [stationstat]
+set lista [split $enames "\n"]
+set listb [split $statussta "\n"]
+set heading "PBXName\,Region\,PhoneName\,Extension\,PhoneSubType\,ReleaseVersion\,PhoneIPAddress\,PhoneMACAddress\,IPPhoneRegistered\,LastUpdateOn,"
+puts $heading
+foreach listelementa $lista listelementb $listb {
+		regsub -all {[\s]} $listelementb ",N/A," listelementc
+		regsub -all {,,} $listelementc ",N/A" listelementd
+		regsub -all {N/AN/A} $listelementd "N/A,N/A" listelemente
+		regsub -all {N/A,r} $listelemente "r" listelementf
+		set listelementg [string map -nocase {
+			"500,N/A," "500,N/A,N/A,N/A,N/A"
+			"500d,N/A," "500d,N/A,N/A,N/A,N/A"
+			"603E1,N/A," "603E1,N/A,N/A,N/A,N/A"
+			"603F1,N/A," "603F1,N/A,N/A,N/A,N/A"
+			"606A1,N/A," "606A1,N/A,N/A,N/A,N/A"
+			"607A1,N/A," "607A1,N/A,N/A,N/A,N/A"
+			"2402,N/A," "2402,N/A,N/A,N/A,N/A"
+			"2410,N/A," "2410,N/A,N/A,N/A,N/A"
+			"2410#,N/A," "2410#,N/A,N/A,N/A,N/A"
+			"2420,N/A," "2420,N/A,N/A,N/A,N/A"
+			"2500,N/A," "2500,N/A,N/A,N/A,N/A"
+			"6210,N/A," "6210,N/A,N/A,N/A,N/A"
+			"6402,N/A," "6402,N/A,N/A,N/A,N/A"
+			"6402D,N/A," "6402D,N/A,N/A,N/A,N/A"
+			"6408,N/A," "6408,N/A,N/A,N/A,N/A"
+			"6408+,N/A," "6408+,N/A,N/A,N/A,N/A"
+			"6408D+,N/A," "6408D+,N/A,N/A,N/A,N/A"
+			"6416D+,N/A," "6416D+,N/A,N/A,N/A,N/A"
+			"6424D+,N/A," "6424D+,N/A,N/A,N/A,N/A"
+			"7101A,N/A," "7101A,N/A,N/A,N/A,N/A"
+			"7406D,N/A," "7406D,N/A,N/A,N/A,N/A"
+			"8110,N/A," "8110,N/A,N/A,N/A,N/A"
+			"8403B,N/A," "8403B,N/A,N/A,N/A,N/A"
+			"8410D,N/A," "8410D,N/A,N/A,N/A,N/A"
+			"8411D,N/A," "8411D,N/A,N/A,N/A,N/A"
+			"8434D,N/A," "8434D,N/A,N/A,N/A,N/A"
+			"CallrID,N/A," "CallrID,N/A,N/A,N/A,N/A"
+			"DS1FD,N/A," "DS1FD,N/A,N/A,N/A,N/A"
+			"DS1SA,N/A," "DS1SA,N/A,N/A,N/A,N/A"
+			"EmTr,N/A," "EmTr,N/A,N/A,N/A,N/A"
+			"FAX,N/A," "FAX,N/A,N/A,N/A,N/A"
+			"K2500,N/A," "K2500,N/A,N/A,N/A,N/A"
+			"LOBBY,N/A," "LOBBY,N/A,N/A,N/A,N/A"
+			"MODEM,N/A," "MODEM,N/A,N/A,N/A,N/A"
+			"NI-BRI,N/A," "NI-BRI,N/A,N/A,N/A,N/A"
+			"POLY,N/A," "POLY,N/A,N/A,N/A,N/A"
+			"POLYD,N/A," "POLYD,N/A,N/A,N/A,N/A"
+			"virtual,N/A," "virtual,N/A,N/A,N/A,N/A"
+			"VMI,N/A," "VMI,N/A,N/A,N/A,N/A"
+			"VRU,N/A," "VRU,N/A,N/A,N/A,N/A"
+			"WCBRI,N/A," "WCBRI,N/A,N/A,N/A,N/A"
+			"XMOBILE,N/A," "XMOBILE,N/A,N/A,N/A,N/A"
+			} $listelementf]
+		puts "$device_hostname\,$device_custom_netinfo_region\,\"$listelementa\"\,$listelementg\,$date "
+	}

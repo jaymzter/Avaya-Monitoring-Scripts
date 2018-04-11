@@ -1,0 +1,207 @@
+#!/usr/bin/expect -f
+
+proc satcmd {} {
+global device_username device_ip device_password sshopts
+set timeout 20
+set dispcap "disp cap\r
+f6003ff00\t3e80ff00\r
+f4a47ff00\t3e91ff00\r
+f4a49ff00\t3e92ff00\r
+f6021ff00\t3e97ff00\r
+f6027ff00\t3e9aff00\r
+f4a3fff00\t3e9eff00\r
+f4651ff00\t4650ff00\r
+f6201ff00\t6200ff00\r
+f660aff00\t6608ff00\r
+f4a42ff00\t3e9cff00\r
+f602dff00\t3ea3ff00\r
+f7214ff00\t7216ff00\r
+f6a00ff00\t6a02ff00\r
+f6d09ff00\t6d0bff00\r
+f7217ff00\t7219ff00\r
+f720aff00\t720cff00\r
+f6035ff00\t3ea7ff00\r
+f603bff00\t3eaaff00\r
+f3eafff00\t3eabff00\r
+f6603ff00\t6605ff00\r
+f6803ff00\t6805ff00\r
+f6d03ff00\t6d05ff00\r
+f7000ff00\t7002ff00\r
+f720eff00\t7210ff00\r
+f7211ff00\t7213ff00\r
+f603dff00\t3eacff00\r
+f3eb2ff00\t3eb1ff00\r
+f7201ff00\t7203ff00\r
+f6d06ff00\t6d08ff00\r
+f520bff00\t520dff00\r
+f5208ff00\t520aff00\r
+f6e03ff00\t6e05ff00\r
+f7003ff00\t7005ff00\r
+f7006ff00\t7008ff00\r
+f7009ff00\t700bff00\r
+f680bff00\t680dff00\r
+f6e09ff00\t6e0bff00\r
+f6800ff00\t6802ff00\r
+f7100ff00\t7102ff00\r
+f6806ff01\t6808ff01\t680aff01\r
+f6806ff02\t6808ff02\t680aff02\r
+f6806ff03\t6808ff03\t680aff03"
+
+eval spawn -noecho ssh $sshopts $device_username@$device_ip
+
+expect {
+	eof {
+		exit
+	}
+	timeout {
+		exit
+	}
+	-re "assword: " {
+	send -- "$device_password\r"
+			}
+	}
+
+expect {
+	-re "513\] " {
+		send -- "ossi\r"
+		expect -exact "t" 
+		send -- "c$dispcap\rt\r"
+		expect -re "(.*)\nt\n" {
+		set cmdout $expect_out(1,string)
+		send -- "clogoff\rt\r"
+			}
+		}
+	}
+
+expect {
+	-re "n\]" {
+		send -- "y\r"
+		}
+	}
+return $cmdout
+}
+
+proc fmt {} {
+global satcmdout
+set dfields {^(d.*)}
+set data [split $satcmdout "\n"]
+foreach field $data {
+	if { [regexp $dfields $field match0] } {
+		regsub {^[d,f]} $match0 "" match1
+		append cmdout $match1
+		append cmdout "\t"
+		}
+	}
+return "$cmdout"
+}
+
+exp_internal 0 #. 1 for debugging
+match_max 100000
+log_user 0
+#. 1 for shell
+set hpna 1
+
+if {$hpna == 1} {
+set disperr "ERROR: Not enough parameters
+USAGE: 
+$argv0 \<username\> \<hostname\> \<password\>
+username - username to connect with
+hostname - remote host fqdn or IP addr
+password - remote password\n"
+
+	if { $argc < 2 } {
+		send_error $disperr
+		exit
+	}
+	set device_username [lindex $argv 0]
+	set device_ip [lindex $argv 1]
+	set device_hostname $device_ip
+	set device_password [lindex $argv 2]
+	set sshopts "-o StrictHostKeyChecking=no -p 5022"
+} else {
+	set device_username $tc_device_username$
+	set device_ip $tc_device_ip$
+	set device_hostname $tc_device_hostname$
+	set device_password $tc_device_password$
+	set sshopts "--hostkey-policy=advisory -p 5022"
+}
+
+set systemTime [clock seconds]
+set date [clock format $systemTime -format {%D %R}]
+set heading "NodeName\,LicenseNumber\,LicenseDescription\,LicenseUsed\,LicenseTotal\,LastUpdateOn,"
+set LicenseDescription(1) "AAR/ARS Patterns"
+set LicenseDescription(2) "Total Vector Directory Numbers"
+set LicenseDescription(3) "Total Vectors Per System"
+set LicenseDescription(4) "Extensions"
+set LicenseDescription(5) "Expansion Port Networks"
+set LicenseDescription(6) "Groups\/Splits\/Skills"
+set LicenseDescription(7) "Logged-In ACD Agents"
+set LicenseDescription(8) "Logged-In Advocate Agents"
+set LicenseDescription(9) "Logged-In IP Softphone Agents"
+set LicenseDescription(10) "CMS Measured ACD Members"
+set LicenseDescription(11) "Personal CO Line \(PCOL\) Trunk Groups"
+set LicenseDescription(12) "Administered Announcement Files"
+set LicenseDescription(13) "TN2501 VAL Boards"
+set LicenseDescription(14) "Media Gateway vVAL Sources"
+set LicenseDescription(15) "TN2602 Boards with 80 VoIP Channels"
+set LicenseDescription(16) "TN2602 Boards with 320 VoIP Channels"
+set LicenseDescription(17) "DS1 Circuit Packs"
+set LicenseDescription(18) "Trunk Groups"
+set LicenseDescription(19) "Trunk Ports"
+set LicenseDescription(20) "H.323 Trunks \(included in Trunk ports\)"
+set LicenseDescription(21) "Remote Office Trunks \(included in Trunk ports\)"
+set LicenseDescription(22) "SBS Trunks \(included in Trunk ports\)"
+set LicenseDescription(23) "SIP Trunks \(included in Trunk ports\)"
+set LicenseDescription(24) "Video Capable H.323 Stations"
+set LicenseDescription(25) "Video Capable IP Softphones"
+set LicenseDescription(26) "ISDN BRI Endpoint And Trunk Ports"
+set LicenseDescription(27) "Station and Trunk Ports"
+set LicenseDescription(28) "Station Capacity"
+set LicenseDescription(29) "SBS Stations"
+set LicenseDescription(30) "Radio Controllers"
+set LicenseDescription(31) "Wireless Terminals"
+set LicenseDescription(32) "XMOBILE Stations"
+set LicenseDescription(33) "Off-PBX Telephone \- EC500"
+set LicenseDescription(34) "Off-PBX Telephone \- OPS"
+set LicenseDescription(35) "Off-PBX Telephone \- SCCAN"
+set LicenseDescription(36) "IP Stations"
+set LicenseDescription(37) "IP Attendant Consoles"
+set LicenseDescription(38) "Remote Office Stations"
+set LicenseDescription(39) "Unauthenticated H.323 Stations"
+
+set count0 0
+#. LicenseDescription
+set count1 1
+#. Used
+set count2 0
+#. Limit
+set count3 1
+
+set satcmdout [satcmd]
+set rawlicense [fmt]
+set values [split  $rawlicense "\t"]
+
+foreach field $values {
+	set lvalue($count0) $field
+	incr count0
+}
+
+puts $heading
+
+while {$count2 < [array size lvalue]} {
+	if {[info exists LicenseDescription($count1)]} {
+	puts "$device_hostname\,$count1\,$LicenseDescription($count1)\,$lvalue($count2)\,$lvalue($count3)\,$date "
+		}
+	incr count1
+	set count2 [expr {$count2 + 2}]
+	set count3 [expr {$count3 + 2}]
+}
+
+set count1 40
+foreach {key value} [array get lvalue] {
+	if { $value == "IP_Agent" } {
+		puts "$device_hostname\,$count1\,$value\,$lvalue([expr {$key +1}])\,$lvalue([expr {$key +2}])\,$date "
+		incr count1
+	}
+}
+
