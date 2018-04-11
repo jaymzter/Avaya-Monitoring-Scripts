@@ -8,7 +8,7 @@ The scripts in this folder were originally built to run from a [HP Network Autom
         send_user "\nPlease enter your password: "
         stty -echo
         expect_user -re ".*\n"
-        set pass $expect_out(0,string)
+        set device_password $expect_out(0,string)
 
 All of the scripts perform the following general functions:
 1. Automatically connect and log in to the PBX using SSH.
