@@ -1,0 +1,207 @@
+#!/usr/bin/expect -f
+
+#----------------------------------------------------------------------------- 
+# constants
+#----------------------------------------------------------------------------- 
+
+set ossifmt "/opt/nagios/ossi.sc/ossifmt"
+set scriptdir "/opt/nagios/ossi.sc"
+set prompt "(%|#|>|\=\>|\\\$)"
+set port 5022
+set status OK
+
+array set NAGIOS {
+	OK	0
+	WARNING	1
+	CRITICAL 2
+	UNKNOWN 3
+	DEPENDANT 4
+}
+
+#----------------------------------------------------------------------------- 
+# procs
+#----------------------------------------------------------------------------- 
+############################################################################
+#
+#  Name    : syntax
+#  Purpose : validate enough parameters to get started
+#  Notes   : 
+#
+############################################################################
+proc syntax {} {
+	global argc argv0
+
+	if { $argc < 5 } {
+		disperr $argv0
+	}
+}
+
+############################################################################
+#
+#  Name    : disperr
+#  Purpose : display error msg
+#  Notes   : 
+#
+############################################################################
+proc disperr {name} {
+	nagios_exit UNKNOWN \
+	"ERROR: Not enough parameters
+USAGE: 
+$name \<username\> \<password\> \<hostname\> ossi_script format
+
+username - username to connect with
+password - account password
+hostname - remote host fqdn or IP addr
+script - directly run an ossi script on \<hostname\>. Defaults to port 5022
+format - what output format to use:
+FORMATTERS:
+alarm           hardware alarm log
+block           measurements blockage form
+first string... dump the raw output from that command
+hist            history
+hwerr           hardware error log
+hwerri          hardware error log incremental
+mst             MST buffer
+prep            preprocessed output (one record per line)
+raw             each field separated by a space
+unity sep       each field spearated by a sep\n" 
+}
+
+############################################################################
+#
+#  Name    : nagios_exit
+#  Purpose : 
+#  Notes   : 
+#  TODO	   : 
+#
+############################################################################
+proc nagios_exit {code mesg} {
+	global NAGIOS
+
+	puts [format "%s: %s" $code $mesg]
+	exit $NAGIOS($code)
+}
+
+############################################################################
+#
+#  Name    : init_session
+#  Purpose : primary access proc
+#  Notes   : logs the user into the remote system
+#
+############################################################################
+proc init_session {login host port} {
+global prompt password
+set remote [format "%s@%s" "$login" "$host"]
+match_max 100000
+log_user 0
+
+# openssh client
+#spawn -noecho ssh -o StrictHostKeyChecking=no -p $port $remote
+# tectia client
+spawn -noecho ssh --hostkey-policy=advisory -p $port $remote
+set session_id $spawn_id
+set timeout 20
+
+	expect {
+		eof {
+			nagios_exit CRITICAL \
+			"Connection was unexpectedly closed\n"
+		}
+		timeout {
+			nagios_exit CRITICAL \
+			"Connection timed out\n"
+		}
+		-re "assword: " {
+			send -- "$password\r"
+			return $session_id
+				}
+		}
+}
+
+############################################################################
+#
+#  Name    : batch_session
+#  Purpose : execute one off batch cmds from prompt
+#  Notes   : 
+#  TODO	   : 
+#
+############################################################################
+proc batch_session {} {
+	exp_internal 0 # add for debugging
+	global argv login password host port scriptdir
+	set runcmd $scriptdir/[lindex $argv 3]
+
+	if  ![file exists $runcmd] {
+		nagios_exit CRITICAL \
+		"Sorry: Script not found or doesnt exist\n"
+		}
+
+	set logfilename script-[exec date +%F-%H-%M-%S].txt
+	set timeout -1
+	set session_id [init_session $login $host $port]
+	log_user 0
+	set spawn_id $session_id
+	expect {
+		-re "terminal type" {
+			send -- "vt100\r"
+			exp_continue
+			}
+		-re $login {
+			send -- "autosat\r"
+			exp_continue
+			}
+		-re "513\] " {
+			send -- "ossi\r"
+			expect -exact "t" {
+			log_file -a -noappend $logfilename
+			set file [open $runcmd "r"]
+			while {[ gets $file line ] != -1} {
+			send -- "$line\r"
+				}
+			close $file
+			}
+			expect -exact "t" {
+			send -- "clogoff\rt\r"
+				}
+			}
+		}
+
+	expect {
+		-re "n\]" {
+			send -- "y\r"
+			}
+		-re "$login" {
+			send -- "exit\r"
+			}
+		}
+	log_file
+return $logfilename
+}
+
+############################################################################
+#
+#  Name    : fmt
+#  Purpose : format output of ossi files
+#  Notes   : currently formats to tab delineated
+#  TODO	   : allow user to choose separator, such as "," or ":"
+#
+############################################################################
+proc fmt {type} {
+	global ossifmt result_raw
+	set out [exec $ossifmt $type $result_raw]
+	return $out
+}
+
+#----------------------------------------------------------------------------- 
+# main
+#----------------------------------------------------------------------------- 
+# ./connect <login> <password> <host> <script>
+syntax
+set login [lindex $argv 0]
+set password [lindex $argv 1]
+set host [lindex $argv 2]
+set format [lindex $argv 4]
+set result_raw [batch_session]
+set result_fmt [fmt $format]
+spawn rm -f $result_raw
+nagios_exit $status $result_fmt
